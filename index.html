@@ -426,6 +426,12 @@
 
         // --- Customer View ---
         function renderCustomerView() {
+            const mainContent = document.getElementById('main-content');
+            if (!mainContent) {
+                console.warn("main-content not found when trying to render Customer View.");
+                return; // Exit gracefully if the container isn't ready
+            }
+
             if (!checkRoleAccess(['customer', 'cashier', 'admin'])) return; // Check role
             const categorizedMenu = appState.menuItems.reduce((acc, item) => {
                 if (item.available) {
@@ -547,7 +553,7 @@
                 </div>
             `;
             
-            document.getElementById('main-content').innerHTML = customerHtml;
+            mainContent.innerHTML = customerHtml;
             refreshCustomerTotal();
         }
 
@@ -645,6 +651,12 @@
 
         // --- Cashier View ---
         function renderCashierView() {
+            const mainContent = document.getElementById('main-content');
+            if (!mainContent) {
+                console.warn("main-content not found when trying to render Cashier View.");
+                return; 
+            }
+
             if (!checkRoleAccess(['cashier', 'admin'])) return; // Check role
             const pendingOrders = getOrdersByStatus('pending');
             const preparingOrders = getOrdersByStatus('preparing');
@@ -804,12 +816,7 @@
                 });
             }
 
-            cashierHtml += `
-                    </div>
-                </div>
-            `;
-            
-            document.getElementById('main-content').innerHTML = cashierHtml;
+            mainContent.innerHTML = cashierHtml;
 
             const ordersListDiv = document.getElementById('orders-list');
             if (ordersListDiv) {
@@ -879,8 +886,8 @@
                     showNotification(statusMessages[newStatus], 'success');
                 }
             } catch (e) {
-                console.error("Error updating order status:", e);
-                showNotification('Error al actualizar el estado del pedido.', 'error');
+                console.error("Error updating order status:", e.code, e.message, e); // Improved logging
+                showNotification(`Error al actualizar el estado del pedido: ${e.message}. Asegúrate de tener permisos.`, 'error');
             }
         }
 
@@ -890,8 +897,8 @@
                     await deleteDoc(doc(db, `artifacts/${restaurantAppId}/orders`, orderId));
                     showNotification('🗑️ Pedido eliminado', 'info');
                 } catch (e) {
-                    console.error("Error deleting order:", e);
-                    showNotification('Error al eliminar el pedido.', 'error');
+                    console.error("Error deleting order:", e.code, e.message, e); // Improved logging
+                    showNotification(`Error al eliminar el pedido: ${e.message}.`, 'error');
                 }
             });
         }
@@ -912,8 +919,8 @@
                     await batch.commit();
                     showNotification('🗑️ Pedidos pendientes y en preparación eliminados. Los datos de reportes no se vieron afectados.', 'info');
                 } catch (e) {
-                    console.error("Error clearing orders:", e);
-                    showNotification('Error al limpiar pedidos.', 'error');
+                    console.error("Error clearing orders:", e.code, e.message, e); // Improved logging
+                    showNotification(`Error al limpiar pedidos: ${e.message}.`, 'error');
                 }
             });
         }
@@ -987,6 +994,11 @@
 
         // --- User View ---
         function renderUserView() {
+            const mainContent = document.getElementById('main-content');
+            if (!mainContent) {
+                console.warn("main-content not found when trying to render User View.");
+                return; 
+            }
             if (!checkRoleAccess(['customer', 'cashier', 'admin'])) return; // Check role
             let userHtml = `
                 <div class="max-w-xl mx-auto bg-white/90 backdrop-blur-lg p-6 sm:p-8 rounded-2xl shadow-2xl border border-white/20">
@@ -1009,7 +1021,7 @@
                     </div>
                 </div>
             `;
-            document.getElementById('main-content').innerHTML = userHtml;
+            mainContent.innerHTML = userHtml;
         }
 
         async function saveRestaurantSettings() {
@@ -1029,13 +1041,18 @@
                 }, { merge: true });
                 showNotification('✅ Configuración del restaurante guardada.', 'success');
             } catch (e) {
-                console.error("Error saving restaurant settings:", e);
-                showNotification('Error al guardar la configuración del restaurante.', 'error');
+                console.error("Error saving restaurant settings:", e.code, e.message, e); // Improved logging
+                showNotification(`Error al guardar la configuración del restaurante: ${e.message}.`, 'error');
             }
         }
 
         // --- Admin View ---
         function renderAdminView() {
+            const mainContent = document.getElementById('main-content');
+            if (!mainContent) {
+                console.warn("main-content not found when trying to render Admin View.");
+                return; 
+            }
             if (!checkRoleAccess(['admin'])) return; // Check role
             const today = new Date();
             const startOfCurrentWeek = getStartOfWeek(today);
@@ -1370,7 +1387,7 @@
                                         <option value="🥪">🥪 Sandwich</option>
                                         <option value="🥗">🥗 Ensalada</option>
                                         <option value="🍝">🍝 Pasta</option>
-                                        <option value="🥧">� Tarta</option>
+                                        <option value="�">🥧 Tarta</option>
                                         <option value="🍫">🍫 Brownie</option>
                                         <option value="🍮">🍮 Tiramisú</option>
                                         <option value="🧃">🧃 Jugo</option>
@@ -1443,14 +1460,7 @@
                 `;
             });
 
-            adminHtml += `
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-            
-            document.getElementById('main-content').innerHTML = adminHtml;
+            mainContent.innerHTML = adminHtml;
             if (filterStartDate) {
                 document.getElementById('startDate').valueAsDate = filterStartDate;
             }
@@ -1487,8 +1497,8 @@
                 document.getElementById('newItemCategory').value = '';
                 document.getElementById('newItemImage').value = '🍽️';
             } catch (e) {
-                console.error("Error adding menu item:", e);
-                showNotification('Error al agregar el producto al menú.', 'error');
+                console.error("Error adding menu item:", e.code, e.message, e); // Improved logging
+                showNotification(`Error al agregar el producto al menú: ${e.message}.`, 'error');
             }
         }
 
@@ -1502,8 +1512,8 @@
                     showNotification(`${!currentAvailability ? '✅ Producto activado' : '❌ Producto desactivado'}`, 'info');
                 }
             } catch (e) {
-                console.error("Error toggling item availability:", e);
-                showNotification('Error al cambiar la disponibilidad del producto.', 'error');
+                console.error("Error toggling item availability:", e.code, e.message, e); // Improved logging
+                showNotification(`Error al cambiar la disponibilidad del producto: ${e.message}.`, 'error');
             }
         }
 
@@ -1513,8 +1523,8 @@
                     await deleteDoc(doc(db, `artifacts/${restaurantAppId}/menuItems`, itemId));
                     showNotification('🗑️ Producto eliminado del menú', 'info');
                 } catch (e) {
-                    console.error("Error deleting menu item:", e);
-                    showNotification('Error al eliminar el producto del menú.', 'error');
+                    console.error("Error deleting menu item:", e.code, e.message, e); // Improved logging
+                    showNotification(`Error al eliminar el producto del menú: ${e.message}.`, 'error');
                 }
             });
         }
@@ -1552,8 +1562,8 @@
                 document.getElementById('newExpenseDescription').value = '';
                 document.getElementById('newExpenseValue').value = '';
             } catch (e) {
-                console.error("Error adding expense:", e);
-                showNotification('Error al agregar el gasto.', 'error');
+                console.error("Error adding expense:", e.code, e.message, e); // Improved logging
+                showNotification(`Error al agregar el gasto: ${e.message}.`, 'error');
             }
         }
 
@@ -1576,8 +1586,8 @@
                     await deleteDoc(expenseRef);
                     showNotification('🗑️ Gasto eliminado', 'info');
                 } catch (e) {
-                    console.error("Error deleting expense:", e);
-                    showNotification('Error al eliminar el gasto.', 'error');
+                    console.error("Error deleting expense:", e.code, e.message, e); // Improved logging
+                    showNotification(`Error al eliminar el gasto: ${e.message}.`, 'error');
                 }
             });
         }
@@ -1603,8 +1613,8 @@
 
                     showNotification('🗑️ Todos los gastos han sido eliminados', 'info');
                 } catch (e) {
-                    console.error("Error clearing all expenses:", e);
-                    showNotification('Error al limpiar todos los gastos.', 'error');
+                    console.error("Error clearing all expenses:", e.code, e.message, e); // Improved logging
+                    showNotification(`Error al limpiar todos los gastos: ${e.message}.`, 'error');
                 }
             });
         }
@@ -1841,6 +1851,11 @@
 
         // --- User Management View ---
         function renderUserManagementView() {
+            const mainContent = document.getElementById('main-content');
+            if (!mainContent) {
+                console.warn("main-content not found when trying to render User Management View.");
+                return; 
+            }
             if (!checkRoleAccess(['admin'])) return; // Only admin can access this view
 
             let userManagementHtml = `
@@ -1896,7 +1911,7 @@
                     </div>
                 </div>
             `;
-            document.getElementById('main-content').innerHTML = userManagementHtml;
+            mainContent.innerHTML = userManagementHtml;
         }
 
         async function updateUserRole(userId, newRole) {
@@ -2117,7 +2132,7 @@
             onSnapshot(collection(db, `artifacts/${restaurantAppId}/orders`), (snapshot) => {
                 appState.orders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 console.log("Orders updated:", appState.orders.length);
-                if (isFirebaseReady) {
+                if (isFirebaseReady) { // Only attempt to re-render if Firebase is fully ready
                     if (currentView === 'cashier') renderCashierView();
                     if (currentView === 'admin') renderAdminView();
                 }
@@ -2166,7 +2181,8 @@
                 if (docSnap.exists()) {
                     appState.tables = docSnap.data().tableIds || ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10']; 
                 } else {
-                    setDoc(doc(db, `artifacts/${restaurantAppId}/tables`, 'tableList'), { tableIds: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10'] });
+                    // Only set initial data if it doesn't exist, to avoid unnecessary writes
+                    setDoc(doc(db, `artifacts/${restaurantAppId}/tables`, 'tableList'), { tableIds: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10'] }, { merge: true });
                     appState.tables = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10'];
                 }
                 appState.tables.sort((a,b) => parseInt(a)-parseInt(b)); 
@@ -2186,7 +2202,7 @@
                     appState.restaurantName = data.restaurantName || 'SISTEPRO';
                     appState.restaurantLogo = data.restaurantLogo || '';
                 } else {
-                    setDoc(doc(db, `artifacts/${restaurantAppId}/settings`, 'restaurantSettings'), { restaurantName: 'SISTEPRO', restaurantLogo: '' });
+                    setDoc(doc(db, `artifacts/${restaurantAppId}/settings`, 'restaurantSettings'), { restaurantName: 'SISTEPRO', restaurantLogo: '' }, { merge: true });
                 }
                 console.log("Restaurant settings updated.");
                 if (isFirebaseReady) {
@@ -2226,7 +2242,7 @@
                         date: todayString,
                         totalRevenueToday: 0,
                         totalExpensesToday: 0
-                    });
+                    }, { merge: true }); // Use merge to avoid overwriting if other fields exist
                     appState.dailyStats = { sales: 0, orders: 0, date: todayString, totalRevenueToday: 0, totalExpensesToday: 0 };
                 }
                 console.log("Daily stats updated.");
@@ -2246,6 +2262,8 @@
             // If running in Canvas, __app_id will be available. Otherwise, use a default ID.
             restaurantAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-restaurant-id';
             
+            console.log("DEBUG: Current restaurantAppId:", restaurantAppId); // <<< ADDED FOR DEBUGGING
+
             let firebaseConfig = {};
             let configSource = 'hardcoded_fallback'; // Default source
             let configParsingError = false;
@@ -2311,7 +2329,7 @@
                         // If user document doesn't exist (e.g., first login after anonymous was removed, or new user before data propagation)
                         // Create a user document with a default 'customer' role
                         currentUserRole = 'customer';
-                        await setDoc(userRoleDocRef, { email: user.email, role: currentUserRole });
+                        await setDoc(userRoleDocRef, { email: user.email, role: currentUserRole }, { merge: true }); // Use merge
                     }
                     console.log("User Role:", currentUserRole);
 
@@ -2336,7 +2354,7 @@
                                 date: previousDayDate,
                                 sales: previousDaySales,
                                 expenses: previousDayExpenses
-                            });
+                            }, { merge: true }); // Use merge
                             console.log("Previous day's financial history recorded.");
                         } else {
                             console.log("Previous day's financial history already recorded.");
@@ -2345,7 +2363,7 @@
 
                     if (appState.dailyStats.date !== initialTodayString) {
                         const dailyStatsDocRef = doc(db, `artifacts/${restaurantAppId}/dailyStats`, initialTodayString);
-                        await setDoc(dailyStatsDocRef, { sales: 0, orders: 0, date: initialTodayString, totalRevenueToday: 0, totalExpensesToday: 0 });
+                        await setDoc(dailyStatsDocRef, { sales: 0, orders: 0, date: initialTodayString, totalRevenueToday: 0, totalExpensesToday: 0 }, { merge: true }); // Use merge
                         console.log("Daily stats reset for new day.");
                     }
 
