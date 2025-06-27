@@ -321,6 +321,10 @@
         // --- AUTHENTICATION UI & LOGIC ---
         function renderAuthView() {
             const appRoot = document.getElementById('app-root');
+            if (!appRoot) {
+                console.warn("app-root not found when trying to render Auth View.");
+                return;
+            }
             appRoot.innerHTML = `
                 <div class="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center">
                     <div class="bg-white/90 backdrop-blur-lg p-8 rounded-2xl shadow-2xl border border-white/20 w-full max-w-md mx-4">
@@ -630,7 +634,8 @@
             };
 
             try {
-                await addDoc(collection(db, `artifacts/${restaurantAppId}/orders`), newOrder);
+                // Modified: Use setDoc to explicitly set the document ID to newOrder.id
+                await setDoc(doc(db, `artifacts/${restaurantAppId}/orders`, newOrder.id), newOrder);
                 showNotification(`¡Pedido enviado con éxito! 🎉 ID: ${newOrder.id}`, 'success', 6000);
                 
                 selectedItems = {};
@@ -862,8 +867,11 @@
 
         async function updateOrderStatus(orderId, newStatus) {
             try {
+                const orderRefPath = `artifacts/${restaurantAppId}/orders/${orderId}`;
+                console.log(`DEBUG: Attempting to update order at path: ${orderRefPath} to status ${newStatus}`);
                 const orderRef = doc(db, `artifacts/${restaurantAppId}/orders`, orderId);
                 const orderSnap = await getDoc(orderRef);
+                
                 if (orderSnap.exists()) {
                     const orderData = orderSnap.data();
                     const oldStatus = orderData.status;
@@ -884,6 +892,10 @@
                         completed: '✅ Pedido completado exitosamente'
                     };
                     showNotification(statusMessages[newStatus], 'success');
+                    console.log(`DEBUG: Order ${orderId} successfully updated to status ${newStatus}`);
+                } else {
+                    showNotification('Error: Pedido no encontrado para actualizar.', 'error');
+                    console.error(`DEBUG: Order with ID ${orderId} not found at path: ${orderRefPath}.`);
                 }
             } catch (e) {
                 console.error("Error updating order status:", e.code, e.message, e); // Improved logging
@@ -1387,9 +1399,9 @@
                                         <option value="🥪">🥪 Sandwich</option>
                                         <option value="🥗">🥗 Ensalada</option>
                                         <option value="🍝">🍝 Pasta</option>
-                                        <option value="�">🥧 Tarta</option>
+                                        <option value="🥧">🥧 Tarta</option>
                                         <option value="🍫">🍫 Brownie</option>
-                                        <option value="🍮">🍮 Tiramisú</option>
+                                        <option value="🍮">� Tiramisú</option>
                                         <option value="🧃">🧃 Jugo</option>
                                         <option value="🍋">🍋 Limonada</option>
                                         <option value="🧊">🧊 Té Helado</option>
@@ -1928,6 +1940,10 @@
         // --- Main App Layout Rendering ---
         function renderAppLayout() {
             const appRoot = document.getElementById('app-root');
+            if (!appRoot) {
+                console.warn("app-root not found when trying to render App Layout.");
+                return;
+            }
             appRoot.innerHTML = `
                 <div class="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex flex-col">
                     <header class="bg-white/80 backdrop-blur-lg border-b border-white/20 shadow-lg sticky top-0 z-50 px-4 py-3 sm:px-6 sm:py-4">
