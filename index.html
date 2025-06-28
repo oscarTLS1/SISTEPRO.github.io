@@ -181,7 +181,7 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         // Import additional Auth functions for email/password and signOut
         import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, orderBy, addDoc, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, orderBy, addDoc, getDocs, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- Global Variables ---
         let currentView = 'customer'; // Default view if authenticated
@@ -197,7 +197,7 @@
         let firebaseApp;
         let db;
         let auth;
-        let restaurantAppId; // This will come from __app_id or default to 'default-restaurant-id'
+        let restaurantAppId; // This will come from __app_id or default based on projectId
         let currentUserId = 'N/A'; // User ID from Firebase Auth
         let currentUserRole = 'guest'; // Default role until authenticated and role is fetched
 
@@ -214,6 +214,9 @@
             lastWeeklyReportReset: new Date(),
             users: [] // Added for user management
         };
+        
+        // NEW: Array to hold Firestore unsubscribe functions
+        let firestoreUnsubscribers = [];
 
         let isFirebaseReady = false; // Flag to indicate Firebase initialization is complete
 
@@ -261,7 +264,7 @@
 
         async function updateDailyStatsInFirestore(orderTotal) {
             const todayString = new Date().toDateString();
-            const dailyStatsDocRef = doc(db, `artifacts/${restaurantAppId}/dailyStats`, todayString);
+            const dailyStatsDocRef = doc(db, 'artifacts', restaurantAppId, 'dailyStats', todayString);
             
             const docSnap = await getDoc(dailyStatsDocRef);
             let currentSales = 0;
@@ -369,7 +372,7 @@
                 const user = userCredential.user;
                 
                 // Save user role to Firestore
-                await setDoc(doc(db, `artifacts/${restaurantAppId}/users`, user.uid), {
+                await setDoc(doc(db, 'artifacts', restaurantAppId, 'users', user.uid), {
                     email: user.email,
                     role: 'customer' // Default role for new sign-ups
                 });
@@ -419,6 +422,19 @@
 
         async function handleSignOut() {
             try {
+                // NEW: Unsubscribe all active Firestore listeners
+                firestoreUnsubscribers.forEach(unsubscribe => unsubscribe());
+                firestoreUnsubscribers = []; // Clear the array
+
+                // Clear app state (important for a clean logout)
+                appState.orders = [];
+                appState.tables = [];
+                appState.menuItems = [];
+                appState.expenses = [];
+                appState.financialHistory = [];
+                appState.users = [];
+                appState.dailyStats = { sales: 0, orders: 0, date: new Date().toDateString(), totalRevenueToday: 0, totalExpensesToday: 0 };
+                
                 await signOut(auth);
                 showNotification('👋 Sesión cerrada.', 'info', 3000);
                 // onAuthStateChanged listener will handle UI update and renderAuthView
@@ -635,7 +651,7 @@
 
             try {
                 // Modified: Use setDoc to explicitly set the document ID to newOrder.id
-                await setDoc(doc(db, `artifacts/${restaurantAppId}/orders`, newOrder.id), newOrder);
+                await setDoc(doc(db, 'artifacts', restaurantAppId, 'orders', newOrder.id), newOrder);
                 showNotification(`¡Pedido enviado con éxito! 🎉 ID: ${newOrder.id}`, 'success', 6000);
                 
                 selectedItems = {};
@@ -846,7 +862,7 @@
 
         async function changeOrderTable(orderId, newTableId) {
             try {
-                const orderRef = doc(db, `artifacts/${restaurantAppId}/orders`, orderId);
+                const orderRef = doc(db, 'artifacts', restaurantAppId, 'orders', orderId);
                 await updateDoc(orderRef, { tableId: newTableId });
                 showNotification(`Mesa del pedido ${orderId} cambiada a ${newTableId === '0' ? 'Para Llevar' : `Mesa ${newTableId}`}`, 'info');
             } catch (e) {
@@ -869,7 +885,7 @@
             try {
                 const orderRefPath = `artifacts/${restaurantAppId}/orders/${orderId}`;
                 console.log(`DEBUG: Attempting to update order at path: ${orderRefPath} to status ${newStatus}`);
-                const orderRef = doc(db, `artifacts/${restaurantAppId}/orders`, orderId);
+                const orderRef = doc(db, 'artifacts', restaurantAppId, 'orders', orderId);
                 const orderSnap = await getDoc(orderRef);
                 
                 if (orderSnap.exists()) {
@@ -906,7 +922,7 @@
         async function deleteOrder(orderId) {
             showCustomConfirmation('¿Estás seguro de que quieres eliminar este pedido? Nota: Si este pedido ya fue completado, sus ventas permanecerán en las estadísticas del día.', async () => {
                 try {
-                    await deleteDoc(doc(db, `artifacts/${restaurantAppId}/orders`, orderId));
+                    await deleteDoc(doc(db, 'artifacts', restaurantAppId, 'orders', orderId));
                     showNotification('🗑️ Pedido eliminado', 'info');
                 } catch (e) {
                     console.error("Error deleting order:", e.code, e.message, e); // Improved logging
@@ -918,7 +934,7 @@
         async function clearAllOrders() {
             showCustomConfirmation('¿Estás seguro de que quieres eliminar TODOS los pedidos PENDIENTES y EN PREPARACIÓN? Los pedidos completados se mantendrán para los reportes detallados y no serán eliminados. Para reiniciar las estadísticas diarias y reportes semanales, el sistema lo hace automáticamente al inicio de un nuevo día/semana.', async () => {
                 try {
-                    const q = query(collection(db, `artifacts/${restaurantAppId}/orders`));
+                    const q = query(collection(db, 'artifacts', restaurantAppId, 'orders'));
                     const querySnapshot = await getDocs(q);
                     
                     const batch = db.batch();
@@ -1025,7 +1041,7 @@
                         <div>
                             <label for="restaurantLogoInput" class="block text-gray-700 text-sm font-bold mb-2">URL del Logo (opcional):</label>
                             <input type="text" id="restaurantLogoInput" value="${appState.restaurantLogo}" placeholder="Ej: https://example.com/logo.png" class="w-full p-3 border rounded-lg focus:ring-blue-500 focus:border-blue-500 text-sm sm:text-base">
-                            ${appState.restaurantLogo ? `<div class="mt-4 text-center"><img src="${appState.restaurantLogo}" alt="Logo del restaurante" class="max-w-[150px] max-h-[150px] mx-auto rounded-full shadow-md"></div>` : ''}
+                            ${appState.restaurantLogo ? `<div class="mt-4 text-center"><img src="${appState.restaurantLogo}" onerror="this.onerror=null;this.src='https://placehold.co/100x100/A0A0A0/FFFFFF?text=LOGO';" alt="Logo del restaurante" class="max-w-[150px] max-h-[150px] mx-auto rounded-full shadow-md"></div>` : ''}
                         </div>
                         <button onclick="saveRestaurantSettings()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg text-base sm:text-base">
                             💾 Guardar Configuración
@@ -1046,7 +1062,7 @@
             }
 
             try {
-                const settingsDocRef = doc(db, `artifacts/${restaurantAppId}/settings`, 'restaurantSettings');
+                const settingsDocRef = doc(db, 'artifacts', restaurantAppId, 'settings', 'restaurantSettings');
                 await setDoc(settingsDocRef, { 
                     restaurantName: newName, 
                     restaurantLogo: newLogo 
@@ -1399,9 +1415,9 @@
                                         <option value="🥪">🥪 Sandwich</option>
                                         <option value="🥗">🥗 Ensalada</option>
                                         <option value="🍝">🍝 Pasta</option>
-                                        <option value="🥧">🥧 Tarta</option>
+                                        <option value="🥧">� Tarta</option>
                                         <option value="🍫">🍫 Brownie</option>
-                                        <option value="🍮">� Tiramisú</option>
+                                        <option value="🍮">🍮 Tiramisú</option>
                                         <option value="🧃">🧃 Jugo</option>
                                         <option value="🍋">🍋 Limonada</option>
                                         <option value="🧊">🧊 Té Helado</option>
@@ -1492,8 +1508,9 @@
                 return;
             }
 
-            const newItem = {
-                id: generateId(), 
+            // Generate an ID to be used as the Firestore document ID
+            const itemId = generateId(); 
+            const newItemData = {
                 name,
                 price,
                 category,
@@ -1502,7 +1519,8 @@
             };
 
             try {
-                await addDoc(collection(db, `artifacts/${restaurantAppId}/menuItems`), newItem);
+                // Use setDoc to explicitly set the document ID to itemId
+                await setDoc(doc(db, 'artifacts', restaurantAppId, 'menuItems', itemId), newItemData);
                 showNotification(`✅ Producto "${name}" agregado exitosamente`, 'success');
                 document.getElementById('newItemName').value = '';
                 document.getElementById('newItemPrice').value = '';
@@ -1516,7 +1534,7 @@
 
         async function toggleItemAvailability(itemId) {
             try {
-                const itemRef = doc(db, `artifacts/${restaurantAppId}/menuItems`, itemId);
+                const itemRef = doc(db, 'artifacts', restaurantAppId, 'menuItems', itemId);
                 const itemSnap = await getDoc(itemRef);
                 if (itemSnap.exists()) {
                     const currentAvailability = itemSnap.data().available;
@@ -1532,7 +1550,7 @@
         async function deleteMenuItem(itemId) {
             showCustomConfirmation('¿Estás seguro de que quieres eliminar este producto del menú? Esta acción es irreversible.', async () => {
                 try {
-                    await deleteDoc(doc(db, `artifacts/${restaurantAppId}/menuItems`, itemId));
+                    await deleteDoc(doc(db, 'artifacts', restaurantAppId, 'menuItems', itemId));
                     showNotification('🗑️ Producto eliminado del menú', 'info');
                 } catch (e) {
                     console.error("Error deleting menu item:", e.code, e.message, e); // Improved logging
@@ -1559,9 +1577,9 @@
             };
 
             try {
-                await addDoc(collection(db, `artifacts/${restaurantAppId}/expenses`), newExpense);
+                await addDoc(collection(db, 'artifacts', restaurantAppId, 'expenses'), newExpense);
                 const todayString = new Date().toDateString();
-                const dailyStatsDocRef = doc(db, `artifacts/${restaurantAppId}/dailyStats`, todayString);
+                const dailyStatsDocRef = doc(db, 'artifacts', restaurantAppId, 'dailyStats', todayString);
                 
                 const docSnap = await getDoc(dailyStatsDocRef);
                 let currentTotalExpensesToday = 0;
@@ -1582,13 +1600,13 @@
         async function deleteExpense(expenseId) {
             showCustomConfirmation('¿Estás seguro de que quieres eliminar este gasto?', async () => {
                 try {
-                    const expenseRef = doc(db, `artifacts/${restaurantAppId}/expenses`, expenseId);
+                    const expenseRef = doc(db, 'artifacts', restaurantAppId, 'expenses', expenseId);
                     const expenseSnap = await getDoc(expenseRef);
                     if (expenseSnap.exists()) {
                         const expenseValue = expenseSnap.data().value;
                         const expenseDate = new Date(expenseSnap.data().timestamp).toDateString();
 
-                        const dailyStatsDocRef = doc(db, `artifacts/${restaurantAppId}/dailyStats`, expenseDate);
+                        const dailyStatsDocRef = doc(db, 'artifacts', restaurantAppId, 'dailyStats', expenseDate);
                         const dailyStatsSnap = await getDoc(dailyStatsDocRef);
                         if (dailyStatsSnap.exists()) {
                             const currentTotalExpensesToday = dailyStatsSnap.data().totalExpensesToday || 0;
@@ -1607,7 +1625,7 @@
         async function clearAllExpenses() {
             showCustomConfirmation('¿Estás seguro de que quieres eliminar TODOS los gastos? Esta acción es irreversible.', async () => {
                 try {
-                    const q = query(collection(db, `artifacts/${restaurantAppId}/expenses`));
+                    const q = query(collection(db, 'artifacts', restaurantAppId, 'expenses'));
                     const querySnapshot = await getDocs(q);
                     const batch = db.batch();
                     querySnapshot.forEach((docSnap) => {
@@ -1615,7 +1633,7 @@
                     });
                     await batch.commit();
 
-                    const dailyStatsCollectionRef = collection(db, `artifacts/${restaurantAppId}/dailyStats`);
+                    const dailyStatsCollectionRef = collection(db, 'artifacts', restaurantAppId, 'dailyStats');
                     const dailyStatsSnapshot = await getDocs(dailyStatsCollectionRef);
                     const dailyStatsBatch = db.batch();
                     dailyStatsSnapshot.forEach((docSnap) => {
@@ -1663,12 +1681,20 @@
         }
 
         async function openEditItemModal(itemId) {
-            const itemRef = doc(db, `artifacts/${restaurantAppId}/menuItems`, itemId);
+            console.log("DEBUG: Attempting to open edit modal for item ID:", itemId);
+            // Construct the item reference using the correctly initialized restaurantAppId
+            const itemRef = doc(db, 'artifacts', restaurantAppId, 'menuItems', itemId);
+            console.log("DEBUG: Item ref path:", itemRef.path);
+
             const itemSnap = await getDoc(itemRef);
+            console.log("DEBUG: Item snapshot exists:", itemSnap.exists());
+            console.log("DEBUG: Item snapshot data:", itemSnap.data());
+
             if (!itemSnap.exists()) {
-                showNotification('Producto no encontrado para editar.', 'error');
+                showNotification(`Producto con ID "${itemId}" no encontrado en Firestore. Por favor, verifique el ID exacto y la ruta en su base de datos: 'artifacts/${restaurantAppId}/menuItems/${itemId}'.`, 'error');
                 return;
             }
+            // Use the data from the snapshot directly, as 'item.id' is now the Firestore Doc ID
             const itemToEdit = { id: itemSnap.id, ...itemSnap.data() };
 
             const modalTitle = `Editar Producto: ${itemToEdit.name}`;
@@ -1743,7 +1769,7 @@
             }
 
             try {
-                const itemRef = doc(db, `artifacts/${restaurantAppId}/menuItems`, itemId);
+                const itemRef = doc(db, 'artifacts', restaurantAppId, 'menuItems', itemId);
                 await updateDoc(itemRef, {
                     name: updatedName,
                     price: updatedPrice,
@@ -1771,7 +1797,7 @@
                 return;
             }
             try {
-                const tablesDocRef = doc(db, `artifacts/${restaurantAppId}/tables`, 'tableList');
+                const tablesDocRef = doc(db, 'artifacts', restaurantAppId, 'tables', 'tableList');
                 const docSnap = await getDoc(tablesDocRef);
                 let currentTables = ['0']; // Ensure '0' is always present for 'Para Llevar'
                 if (docSnap.exists()) {
@@ -1796,7 +1822,7 @@
             }
             showCustomConfirmation(`¿Estás seguro de que quieres eliminar la Mesa ${tableToDelete}?`, async () => {
                 try {
-                    const tablesDocRef = doc(db, `artifacts/${restaurantAppId}/tables`, 'tableList');
+                    const tablesDocRef = doc(db, 'artifacts', restaurantAppId, 'tables', 'tableList');
                     const docSnap = await getDoc(tablesDocRef);
                     let currentTables = ['0']; // Ensure '0' is always present
                     if (docSnap.exists()) {
@@ -1928,7 +1954,7 @@
 
         async function updateUserRole(userId, newRole) {
             try {
-                const userRef = doc(db, `artifacts/${restaurantAppId}/users`, userId);
+                const userRef = doc(db, 'artifacts', restaurantAppId, 'users', userId);
                 await updateDoc(userRef, { role: newRole });
                 showNotification(`✅ Rol de usuario actualizado a "${newRole}".`, 'success');
             } catch (e) {
@@ -2145,103 +2171,144 @@
 
         // Moved Firestore listeners into a separate function to be called after auth
         function setupFirestoreListeners() {
-            onSnapshot(collection(db, `artifacts/${restaurantAppId}/orders`), (snapshot) => {
+            if (!db || !auth) {
+                console.error("ERROR: Firestore DB or Auth not initialized. Cannot set up listeners.");
+                return;
+            }
+            console.log("DEBUG: Setting up Firestore listeners...");
+
+            // Store the unsubscribe function for each listener
+            // Check if listeners are already set to prevent duplicates, especially important if onAuthStateChanged fires multiple times
+            if (firestoreUnsubscribers.length > 0) {
+                console.log("DEBUG: Listeners already set, skipping setup.");
+                return; 
+            }
+
+            firestoreUnsubscribers.push(onSnapshot(collection(db, 'artifacts', restaurantAppId, 'orders'), (snapshot) => {
                 appState.orders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                console.log("Orders updated:", appState.orders.length);
-                if (isFirebaseReady) { // Only attempt to re-render if Firebase is fully ready
+                console.log("DEBUG: Orders updated:", appState.orders.length);
+                if (isFirebaseReady) { 
                     if (currentView === 'cashier') renderCashierView();
                     if (currentView === 'admin') renderAdminView();
                 }
             }, (error) => {
-                console.error("Error fetching orders:", error.code, error.message, error);
-                showNotification(`Error al cargar pedidos: ${error.message}. Recargue la página.`, 'error', 7000);
-            });
+                // Suppress "permission-denied" errors on logout, as they are expected.
+                if (error.code !== 'permission-denied') {
+                    console.error("Error fetching orders:", error.code, error.message, error);
+                    showNotification(`Error al cargar pedidos: ${error.message}. Recargue la página.`, 'error', 7000);
+                } else {
+                    console.debug("DEBUG: Firestore permission-denied for orders (likely on logout):", error.message);
+                }
+            }));
 
-            onSnapshot(collection(db, `artifacts/${restaurantAppId}/menuItems`), (snapshot) => {
+            firestoreUnsubscribers.push(onSnapshot(collection(db, 'artifacts', restaurantAppId, 'menuItems'), (snapshot) => {
                 appState.menuItems = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                console.log("Menu items updated:", appState.menuItems.length);
+                console.log("DEBUG: Menu items updated:", appState.menuItems.length);
                 if (isFirebaseReady) {
                     if (currentView === 'customer') renderCustomerView();
                     if (currentView === 'admin') renderAdminView();
                 }
             }, (error) => {
-                console.error("Error fetching menu items:", error.code, error.message, error);
-                showNotification(`Error al cargar menú: ${error.message}. Recargue la página.`, 'error', 7000);
-            });
+                if (error.code !== 'permission-denied') {
+                    console.error("Error fetching menu items:", error.code, error.message, error);
+                    showNotification(`Error al cargar menú: ${error.message}. Recargue la página.`, 'error', 7000);
+                } else {
+                    console.debug("DEBUG: Firestore permission-denied for menuItems (likely on logout):", error.message);
+                }
+            }));
 
-            onSnapshot(collection(db, `artifacts/${restaurantAppId}/expenses`), (snapshot) => {
+            firestoreUnsubscribers.push(onSnapshot(collection(db, 'artifacts', restaurantAppId, 'expenses'), (snapshot) => {
                 appState.expenses = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                console.log("Expenses updated:", appState.expenses.length);
+                console.log("DEBUG: Expenses updated:", appState.expenses.length);
                 appState.dailyStats.totalExpensesToday = getExpensesForDate(new Date().toDateString());
                 if (isFirebaseReady) {
                     if (currentView === 'admin') renderAdminView();
                 }
             }, (error) => {
-                console.error("Error fetching expenses:", error.code, error.message, error);
-                showNotification(`Error al cargar gastos: ${error.message}. Recargue la página.`, 'error', 7000);
-            });
+                if (error.code !== 'permission-denied') {
+                    console.error("Error fetching expenses:", error.code, error.message, error);
+                    showNotification(`Error al cargar gastos: ${error.message}. Recargue la página.`, 'error', 7000);
+                } else {
+                    console.debug("DEBUG: Firestore permission-denied for expenses (likely on logout):", error.message);
+                }
+            }));
 
-            onSnapshot(collection(db, `artifacts/${restaurantAppId}/financialHistory`), (snapshot) => {
+            firestoreUnsubscribers.push(onSnapshot(collection(db, 'artifacts', restaurantAppId, 'financialHistory'), (snapshot) => {
                 appState.financialHistory = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 appState.financialHistory.sort((a, b) => new Date(a.date) - new Date(b.date)); 
-                console.log("Financial history updated:", appState.financialHistory.length);
+                console.log("DEBUG: Financial history updated:", appState.financialHistory.length);
                 if (isFirebaseReady) {
                     if (currentView === 'admin') renderAdminView();
                 }
             }, (error) => {
-                console.error("Error fetching financial history:", error.code, error.message, error);
-                showNotification(`Error al cargar historial financiero: ${error.message}. Recargue la página.`, 'error', 7000);
-            });
+                if (error.code !== 'permission-denied') {
+                    console.error("Error fetching financial history:", error.code, error.message, error);
+                    showNotification(`Error al cargar historial financiero: ${error.message}. Recargue la página.`, 'error', 7000);
+                } else {
+                    console.debug("DEBUG: Firestore permission-denied for financialHistory (likely on logout):", error.message);
+                }
+            }));
 
-            onSnapshot(doc(db, `artifacts/${restaurantAppId}/tables`, 'tableList'), (docSnap) => {
+            firestoreUnsubscribers.push(onSnapshot(doc(db, 'artifacts', restaurantAppId, 'tables', 'tableList'), (docSnap) => {
                 if (docSnap.exists()) {
                     appState.tables = docSnap.data().tableIds || ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10']; 
                 } else {
-                    // Only set initial data if it doesn't exist, to avoid unnecessary writes
-                    setDoc(doc(db, `artifacts/${restaurantAppId}/tables`, 'tableList'), { tableIds: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10'] }, { merge: true });
+                    setDoc(doc(db, 'artifacts', restaurantAppId, 'tables', 'tableList'), { tableIds: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10'] }, { merge: true });
                     appState.tables = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10'];
                 }
                 appState.tables.sort((a,b) => parseInt(a)-parseInt(b)); 
-                console.log("Tables updated:", appState.tables.length);
+                console.log("DEBUG: Tables updated:", appState.tables.length);
                 if (isFirebaseReady) {
                     if (currentView === 'customer') renderCustomerView();
                     if (currentView === 'admin') renderAdminView();
                 }
             }, (error) => {
-                console.error("Error fetching tables:", error.code, error.message, error);
-                showNotification(`Error al cargar mesas: ${error.message}. Recargue la página.`, 'error', 7000);
-            });
+                if (error.code !== 'permission-denied') {
+                    console.error("Error fetching tables:", error.code, error.message, error);
+                    showNotification(`Error al cargar mesas: ${error.message}. Recargue la página.`, 'error', 7000);
+                } else {
+                    console.debug("DEBUG: Firestore permission-denied for tables (likely on logout):", error.message);
+                }
+            }));
 
-            onSnapshot(doc(db, `artifacts/${restaurantAppId}/settings`, 'restaurantSettings'), (docSnap) => {
+            firestoreUnsubscribers.push(onSnapshot(doc(db, 'artifacts', restaurantAppId, 'settings', 'restaurantSettings'), (docSnap) => {
                 if (docSnap.exists()) {
                     const data = docSnap.data();
                     appState.restaurantName = data.restaurantName || 'SISTEPRO';
                     appState.restaurantLogo = data.restaurantLogo || '';
                 } else {
-                    setDoc(doc(db, `artifacts/${restaurantAppId}/settings`, 'restaurantSettings'), { restaurantName: 'SISTEPRO', restaurantLogo: '' }, { merge: true });
+                    setDoc(doc(db, 'artifacts', restaurantAppId, 'settings', 'restaurantSettings'), { restaurantName: 'SISTEPRO', restaurantLogo: '' }, { merge: true });
                 }
-                console.log("Restaurant settings updated.");
+                console.log("DEBUG: Restaurant settings updated.");
                 if (isFirebaseReady) {
                     updateHeaderDisplay(); 
                 }
             }, (error) => {
-                console.error("Error fetching restaurant settings:", error.code, error.message, error);
-                showNotification(`Error al cargar la configuración del restaurante: ${error.message}. Recargue la página.`, 'error', 7000);
-            });
+                if (error.code !== 'permission-denied') {
+                    console.error("Error fetching restaurant settings:", error.code, error.message, error);
+                    showNotification(`Error al cargar la configuración del restaurante: ${e.message}. Recargue la página.`, 'error', 7000);
+                } else {
+                    console.debug("DEBUG: Firestore permission-denied for settings (likely on logout):", error.message);
+                }
+            }));
 
-            onSnapshot(collection(db, `artifacts/${restaurantAppId}/users`), (snapshot) => {
+            firestoreUnsubscribers.push(onSnapshot(collection(db, 'artifacts', restaurantAppId, 'users'), (snapshot) => {
                 appState.users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                console.log("Users updated:", appState.users.length);
+                console.log("DEBUG: Users updated:", appState.users.length);
                 if (isFirebaseReady) {
                     if (currentView === 'user-management') renderUserManagementView();
                 }
             }, (error) => {
-                console.error("Error fetching users:", error.code, error.message, error);
-                showNotification(`Error al cargar usuarios: ${error.message}. Recargue la página.`, 'error', 7000);
-            });
+                if (error.code !== 'permission-denied') {
+                    console.error("Error fetching users:", error.code, error.message, error);
+                    showNotification(`Error al cargar usuarios: ${e.message}. Recargue la página.`, 'error', 7000);
+                } else {
+                    console.debug("DEBUG: Firestore permission-denied for users (likely on logout):", error.message);
+                }
+            }));
 
             const todayString = new Date().toDateString();
-            onSnapshot(doc(db, `artifacts/${restaurantAppId}/dailyStats`, todayString), (docSnap) => {
+            firestoreUnsubscribers.push(onSnapshot(doc(db, 'artifacts', restaurantAppId, 'dailyStats', todayString), (docSnap) => {
                 if (docSnap.exists()) {
                     const data = docSnap.data();
                     appState.dailyStats = {
@@ -2252,7 +2319,7 @@
                         totalExpensesToday: data.totalExpensesToday || 0
                     };
                 } else {
-                    setDoc(doc(db, `artifacts/${restaurantAppId}/dailyStats`, todayString), {
+                    setDoc(doc(db, 'artifacts', restaurantAppId, 'dailyStats', todayString), {
                         sales: 0,
                         orders: 0,
                         date: todayString,
@@ -2261,35 +2328,38 @@
                     }, { merge: true }); // Use merge to avoid overwriting if other fields exist
                     appState.dailyStats = { sales: 0, orders: 0, date: todayString, totalRevenueToday: 0, totalExpensesToday: 0 };
                 }
-                console.log("Daily stats updated.");
+                console.log("DEBUG: Daily stats updated.");
                 if (isFirebaseReady) {
                     if (currentView === 'cashier') renderCashierView();
                     if (currentView === 'admin') renderAdminView();
                 }
             }, (error) => {
-                console.error("Error fetching daily stats:", error.code, error.message, error);
-                showNotification(`Error al cargar estadísticas diarias: ${error.message}. Recargue la página.`, 'error', 7000);
-            });
+                if (error.code !== 'permission-denied') {
+                    console.error("Error fetching daily stats:", error.code, error.message, error);
+                    showNotification(`Error al cargar estadísticas diarias: ${e.message}. Recargue la página.`, 'error', 7000);
+                } else {
+                    console.debug("DEBUG: Firestore permission-denied for dailyStats (likely on logout):", error.message);
+                }
+            }));
         }
 
         // --- App Initialization ---
         async function initApp() {
-            // Ensure restaurantAppId is properly initialized.
-            // If running in Canvas, __app_id will be available. Otherwise, use a default ID.
-            restaurantAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-restaurant-id';
+            // Define restaurantAppId explicitly to match the user's Firestore structure under 'artifacts'.
+            // This is distinct from firebaseConfig.projectId which defines the overall Firebase project.
+            // It defaults to '__app_id' if available from the Canvas environment, otherwise 'default-restaurant-id'.
+            restaurantAppId = typeof __app_id !== 'undefined' && __app_id.length > 0 ? __app_id : 'default-restaurant-id';
             
-            console.log("DEBUG: Current restaurantAppId:", restaurantAppId); // <<< ADDED FOR DEBUGGING
+            console.log("DEBUG: App is configured to use Firestore artifact path segment:", restaurantAppId);
+            console.log("DEBUG: Canvas '__app_id' variable (if available):", typeof __app_id !== 'undefined' ? __app_id : 'undefined');
 
             let firebaseConfig = {};
-            let configSource = 'hardcoded_fallback'; // Default source
             let configParsingError = false;
 
-            // Try to parse __firebase_config if it's available (from Canvas environment)
             if (typeof __firebase_config !== 'undefined' && __firebase_config) {
                 try {
                     firebaseConfig = JSON.parse(__firebase_config);
-                    configSource = 'canvas_global_variable';
-                    console.log("Firebase config loaded from Canvas global variable (__firebase_config).");
+                    console.log("DEBUG: Firebase config loaded from Canvas global variable (__firebase_config).");
                 } catch (e) {
                     console.error("Error parsing __firebase_config:", e.message, e);
                     showNotification(`🚨 ERROR CRÍTICO: Configuración de Firebase no válida desde el entorno. Mensaje: ${e.message}. Se intentará usar configuración por defecto.`, 'error', 15000);
@@ -2298,32 +2368,31 @@
             }
 
             // If parsing failed or __firebase_config was not available, use hardcoded values
-            if (configSource === 'hardcoded_fallback' || configParsingError || !firebaseConfig.projectId || !firebaseConfig.apiKey) {
-                console.warn("Using hardcoded Firebase config. This is expected if running locally outside the Canvas environment or if global config failed to load/parse.");
+            // IMPORTANT: These hardcoded values MUST match your Firebase project settings.
+            if (configParsingError || !firebaseConfig.projectId || !firebaseConfig.apiKey) {
+                console.warn("DEBUG: Using hardcoded Firebase config. This is expected if running locally outside the Canvas environment or if global config failed to load/parse.");
                 firebaseConfig = {
                     apiKey: "AIzaSyBa3wSnKKusJZAKDpA_KaC7JupU0tqGEMM", // REEMPLAZA ESTO CON TU CLAVE API REAL DE FIREBASE
                     authDomain: "agroinsight-colombia.firebaseapp.com",
-                    projectId: "agroinsight-colombia",
+                    projectId: "agroinsight-colombia", // REEMPLAZA ESTO CON TU PROJECT ID REAL DE FIREBASE
                     storageBucket: "agroinsight-colombia.appspot.com",
                     messagingSenderId: "601872739262",
-                    // For local development when __app_id is not present, use a local default appId.
-                    // This is different from the appId provided in firebaseConfig from the console.
-                    appId: typeof __app_id !== 'undefined' ? __app_id : '1:601872739262:web:default-local-app-id' 
+                    appId: "1:601872739262:web:your-web-app-firebase-app-id" // REEMPLAZA ESTO CON EL ID DE TU APP WEB DE FIREBASE
                 };
-                configSource = 'hardcoded_fallback_used';
             }
+            
+            console.log("DEBUG: Firebase Config projectId (from config):", firebaseConfig.projectId);
+            console.log("DEBUG: Firebase Config final (antes de initializeApp):", firebaseConfig);
+
 
             // Final check on essential keys before initializing
             if (!firebaseConfig.projectId || !firebaseConfig.apiKey) {
-                console.error("Error CRÍTICO: Firebase projectId o apiKey faltantes después de todos los intentos de carga.");
+                console.error("ERROR CRÍTICO: Firebase projectId o apiKey faltantes después de todos los intentos de carga.");
                 showNotification("🚨 ERROR CRÍTICO: Firebase Project ID o API Key son necesarios para iniciar la aplicación y no se pudieron cargar. Por favor, asegúrate de que tu configuración de Firebase sea correcta.", 'error', 15000);
                 isFirebaseReady = true;
                 renderAuthView();
                 return; // Stop initialization
             }
-
-            // Log the final config for debugging
-            console.log("Firebase Config final (antes de initializeApp):", firebaseConfig);
 
             firebaseApp = initializeApp(firebaseConfig);
             db = getFirestore(firebaseApp);
@@ -2336,19 +2405,34 @@
                     console.log("Firebase Authenticated as:", currentUserId);
 
                     // Fetch user role from Firestore
-                    const userRoleDocRef = doc(db, `artifacts/${restaurantAppId}/users`, user.uid);
-                    const userRoleSnap = await getDoc(userRoleDocRef);
+                    const userRoleDocRef = doc(db, 'artifacts', restaurantAppId, 'users', user.uid);
+                    try {
+                        const userRoleSnap = await getDoc(userRoleDocRef);
 
-                    if (userRoleSnap.exists()) {
-                        currentUserRole = userRoleSnap.data().role;
-                    } else {
-                        // If user document doesn't exist (e.g., first login after anonymous was removed, or new user before data propagation)
-                        // Create a user document with a default 'customer' role
-                        currentUserRole = 'customer';
-                        await setDoc(userRoleDocRef, { email: user.email, role: currentUserRole }, { merge: true }); // Use merge
+                        if (userRoleSnap.exists()) {
+                            currentUserRole = userRoleSnap.data().role;
+                        } else {
+                            currentUserRole = 'customer'; // Default role if user doc doesn't exist
+                            await setDoc(userRoleDocRef, { email: user.email, role: currentUserRole }, { merge: true });
+                        }
+                    } catch (error) {
+                        console.error("Error fetching/setting user role:", error.code, error.message, error);
+                        showNotification(`Error al obtener/establecer rol de usuario: ${error.message}. Puede que haya problemas de permisos en la colección 'users'.`, 'error', 10000);
+                        currentUserRole = 'guest'; // Fallback to guest if error during role fetch
                     }
+                    
                     console.log("User Role:", currentUserRole);
 
+                    // Check and populate menuItems collection if empty, but without default items
+                    const menuItemsCollectionRef = collection(db, 'artifacts', restaurantAppId, 'menuItems');
+                    const menuItemsSnapshot = await getDocs(menuItemsCollectionRef);
+
+                    if (menuItemsSnapshot.empty) {
+                        console.log("DEBUG: menuItems collection is empty. Ready for manual additions.");
+                        // No default items will be added. The collection will implicitly be created upon the first manual addition.
+                    } else {
+                        console.log("DEBUG: menuItems collection already contains data.");
+                    }
                     // Set up real-time listeners for all main app data *after* authentication
                     setupFirestoreListeners();
 
@@ -2357,12 +2441,31 @@
                     const initialTodayString = initialToday.toDateString();
                     const initialCurrentWeekStart = getStartOfWeek(initialToday);
 
+                    // Fetch current daily stats to ensure accurate `appState.dailyStats` before any reset logic
+                    const dailyStatsDocRefInit = doc(db, 'artifacts', restaurantAppId, 'dailyStats', initialTodayString);
+                    const dailyStatsSnapInit = await getDoc(dailyStatsDocRefInit);
+                    if (dailyStatsSnapInit.exists()) {
+                        const data = dailyStatsSnapInit.data();
+                        appState.dailyStats = {
+                            sales: data.sales || 0,
+                            orders: data.orders || 0,
+                            date: data.date || initialTodayString,
+                            totalRevenueToday: data.totalRevenueToday || 0,
+                            totalExpensesToday: data.totalExpensesToday || 0
+                        };
+                    } else {
+                        // Initialize if it doesn't exist
+                        await setDoc(doc(db, 'artifacts', restaurantAppId, 'dailyStats', initialTodayString), { sales: 0, orders: 0, date: initialTodayString, totalRevenueToday: 0, totalExpensesToday: 0 }, { merge: true });
+                        appState.dailyStats = { sales: 0, orders: 0, date: initialTodayString, totalRevenueToday: 0, totalExpensesToday: 0 };
+                    }
+
+
                     if (appState.dailyStats.date && appState.dailyStats.date !== initialTodayString) {
                         const previousDayDate = appState.dailyStats.date;
                         const previousDaySales = appState.dailyStats.totalRevenueToday; 
                         const previousDayExpenses = appState.dailyStats.totalExpensesToday; 
 
-                        const financialHistoryDocRef = doc(db, `artifacts/${restaurantAppId}/financialHistory`, previousDayDate);
+                        const financialHistoryDocRef = doc(db, 'artifacts', restaurantAppId, 'financialHistory', previousDayDate);
                         const docSnap = await getDoc(financialHistoryDocRef);
 
                         if (!docSnap.exists()) {
@@ -2370,7 +2473,7 @@
                                 date: previousDayDate,
                                 sales: previousDaySales,
                                 expenses: previousDayExpenses
-                            }, { merge: true }); // Use merge
+                            }, { merge: true }); 
                             console.log("Previous day's financial history recorded.");
                         } else {
                             console.log("Previous day's financial history already recorded.");
@@ -2378,12 +2481,12 @@
                     }
 
                     if (appState.dailyStats.date !== initialTodayString) {
-                        const dailyStatsDocRef = doc(db, `artifacts/${restaurantAppId}/dailyStats`, initialTodayString);
-                        await setDoc(dailyStatsDocRef, { sales: 0, orders: 0, date: initialTodayString, totalRevenueToday: 0, totalExpensesToday: 0 }, { merge: true }); // Use merge
+                        const dailyStatsDocRef = doc(db, 'artifacts', restaurantAppId, 'dailyStats', initialTodayString);
+                        await setDoc(dailyStatsDocRef, { sales: 0, orders: 0, date: initialTodayString, totalRevenueToday: 0, totalExpensesToday: 0 }, { merge: true }); 
                         console.log("Daily stats reset for new day.");
                     }
 
-                    const settingsDocRef = doc(db, `artifacts/${restaurantAppId}/settings`, 'restaurantSettings');
+                    const settingsDocRef = doc(db, 'artifacts', restaurantAppId, 'settings', 'restaurantSettings');
                     const settingsSnap = await getDoc(settingsDocRef);
                     let currentLastWeeklyReportReset = appState.lastWeeklyReportReset;
                     if (settingsSnap.exists() && settingsSnap.data().lastWeeklyReportReset) {
@@ -2405,7 +2508,8 @@
                     // User is signed out or not authenticated
                     currentUserId = 'N/A';
                     currentUserRole = 'guest';
-                    isFirebaseReady = true; // Mark ready to show login form
+                    // The handleSignOut function now takes care of unsubscribing, so no need to repeat here.
+                    isFirebaseReady = true; 
                     renderAuthView(); // Show login/signup form
                     showNotification('Inicie sesión para acceder al sistema.', 'info', 3000);
                 }
